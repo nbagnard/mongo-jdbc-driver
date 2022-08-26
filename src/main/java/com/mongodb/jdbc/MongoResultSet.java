@@ -100,6 +100,7 @@ public class MongoResultSet implements ResultSet {
     protected MongoResultSetMetaData rsMetaData;
     protected MongoLogger logger;
     protected boolean extJsonMode;
+    private MongoJsonSchema jsonSchema;
 
     /**
      * Constructor for a MongoResultset tied to a connection and statement.
@@ -150,6 +151,7 @@ public class MongoResultSet implements ResultSet {
             Integer statementId)
             throws SQLException {
         Preconditions.checkNotNull(cursor);
+        this.jsonSchema = schema;
         // dateFormat is not thread safe, so we do not want to make it a static field.
         dateFormat.setTimeZone(UTC);
         // Only sort the columns alphabetically for SQL statement result sets and not for database metadata result sets.
@@ -176,6 +178,12 @@ public class MongoResultSet implements ResultSet {
         if (i > rsMetaData.getColumnCount()) {
             throw new SQLException("Index out of bounds: '" + i + "'.");
         }
+    }
+
+    public String getJsonSchema() throws SQLException {
+        checkClosed();
+
+        return this.jsonSchema.toString();
     }
 
     @Override

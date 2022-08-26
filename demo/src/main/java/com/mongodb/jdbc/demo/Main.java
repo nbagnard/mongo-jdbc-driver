@@ -4,6 +4,7 @@ import java.sql.*;
 import java.util.TimeZone;
 import java.util.Calendar;
 import java.util.GregorianCalendar;
+import java.util.logging.Level;
 
 public class Main {
    // JDBC driver name and database URL
@@ -31,6 +32,7 @@ public class Main {
          // p.setProperty("user", "user");
          // p.setProperty("password", "foo");
          p.setProperty("database", "test");
+         p.setProperty("LogLevel", Level.FINER.getName());
          System.out.println("Connecting to database test...");
          Connection conn = DriverManager.getConnection(URL, p);
 

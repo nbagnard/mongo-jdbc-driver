@@ -16,8 +16,21 @@
 
 package com.mongodb.jdbc;
 
+import java.io.StringWriter;
+import org.bson.codecs.BsonValueCodecProvider;
+import org.bson.codecs.Codec;
+import org.bson.codecs.EncoderContext;
+import org.bson.codecs.ValueCodecProvider;
+import org.bson.codecs.configuration.CodecRegistry;
+import org.bson.codecs.pojo.PojoCodecProvider;
 import org.bson.codecs.pojo.annotations.BsonCreator;
 import org.bson.codecs.pojo.annotations.BsonProperty;
+import org.bson.json.JsonMode;
+import org.bson.json.JsonWriter;
+import org.bson.json.JsonWriterSettings;
+
+
+import static org.bson.codecs.configuration.CodecRegistries.fromProviders;
 
 public class MongoVersionedJsonSchema {
     public Integer version;

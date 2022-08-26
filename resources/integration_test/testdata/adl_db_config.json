@@ -34,5 +34,31 @@
       }
     ],
     "views" : null
+  },
+  {
+    "name" : "tdvt",
+    "collections" : [
+      {
+        "name": "Staples",
+        "dataSources" : [
+          {
+            "collection": "staples",
+            "storeName" : "localmongo",
+            "database" : "tdvt"
+          }
+        ]
+      },
+      {
+        "name": "Calcs",
+        "dataSources" : [
+          {
+            "collection": "calcs",
+            "storeName" : "localmongo",
+            "database" : "tdvt"
+          }
+        ]
+      }
+    ],
+    "views" : null
   }
 ]

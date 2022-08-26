@@ -1,10 +1,25 @@
 package com.mongodb.jdbc.utils;
 
+import com.google.common.io.BaseEncoding;
+import com.mongodb.jdbc.MongoResultSet;
+import com.mongodb.jdbc.Pair;
+import com.sun.org.apache.xerces.internal.impl.dv.util.Base64;
+import java.math.BigDecimal;
+import java.net.Inet4Address;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Properties;
+import java.util.Set;
+import java.util.logging.Level;
+import org.apache.commons.lang3.ArrayUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,20 +43,86 @@ import org.junit.jupiter.api.Test;
  */
 public abstract class TestUtils {
 
+    protected enum RsPrintType {
+        VALUES,
+        METADATA,
+        JSON_SCHEMA
+    }
+
+    static final String LOG_LEVEL = "LogLevel";
+    static final String LOG_DIR = "LogDir";
+
+    static final HashSet VALUES_ONLY = new HashSet<>();
+    static final HashSet METADATA_ONLY = new HashSet<>();
+    static final HashSet JSONSCHEMA_ONLY = new HashSet<>();
+    static final HashSet METADATA_AND_VALUES = new HashSet<>();
+    static final HashSet ALL = new HashSet<>();
+    static {
+        VALUES_ONLY.add(RsPrintType.VALUES);
+        METADATA_ONLY.add(RsPrintType.METADATA);
+        JSONSCHEMA_ONLY.add(RsPrintType.JSON_SCHEMA);
+        METADATA_AND_VALUES.add(RsPrintType.METADATA);
+        METADATA_AND_VALUES.add(RsPrintType.VALUES);
+        ALL.add(RsPrintType.VALUES);
+        ALL.add(RsPrintType.METADATA);
+        ALL.add(RsPrintType.JSON_SCHEMA);
+    }
+
     protected Connection m_conn;
     protected DatabaseMetaData m_dbMeta;
 
-    protected abstract Connection connect() throws Exception;
+    protected abstract Connection connect(Properties props) throws Exception;
 
     @BeforeEach
     private void execConnection() throws Exception {
-        m_conn = connect();
+        Properties props = new Properties();
+        //props.setProperty(LOG_LEVEL, Level.FINER.getName());
+        m_conn = connect(props);
         m_dbMeta = m_conn.getMetaData();
     }
 
     @AfterEach
     private void execDeconnection() throws Exception {
         m_conn.close();
+    }
+
+    @Test
+    void closeOnCompletion() throws SQLException {
+        Statement stmt = m_conn.createStatement();
+        stmt.closeOnCompletion();
+        ResultSet rs = stmt.executeQuery("Select 1");
+        stmt.close();
+    }
+
+    @Test
+    void tryLogging() throws Exception {
+        runExecuteQuery("select * from bar",VALUES_ONLY);
+        //((MongoConnection) m_conn).getConnectionId();
+        try {
+            Properties props = new Properties();
+            Connection conn2 = connect(props);
+            //((MongoConnection) conn2).getConnectionId();
+            Statement stmt = conn2.createStatement();
+            stmt.executeQuery("Invalid SQL");
+            stmt.close();
+        }
+        catch (Exception e)
+        {
+            e.printStackTrace();
+        }
+
+        try {
+            Properties props = new Properties();
+            props.setProperty(LOG_LEVEL, Level.SEVERE.getName());
+            Connection conn3 = connect(props);
+            //((MongoConnection) conn3).getConnectionId();
+            Statement stmt = conn3.createStatement();
+            stmt.executeQuery("Another invalid SQL");
+            stmt.close();
+        }catch (Exception e)
+        {
+            e.printStackTrace();
+        }
     }
 
     @Test
@@ -53,13 +134,411 @@ public abstract class TestUtils {
     }
 
     @Test
+    void testBase64()
+    {
+        String text = "toto à la plage";
+        byte[] data = text.getBytes(StandardCharsets.UTF_8);
+        System.out.println(Base64.encode(data));
+    }
+
+    @Test
+    void tryGetBytes() throws Exception {
+        try {
+            Statement stmt = m_conn.createStatement();
+            ResultSet rs = stmt.executeQuery("select * from binaryData");
+            ResultSetMetaData rsMeta = rs.getMetaData();
+            while (rs.next()){
+                    System.out.println("ID " + rs.getString(1));
+                    byte[] data = rs.getBytes(2);
+                    System.out.println(ArrayUtils.toString(data));
+                    String base64 = Base64.encode(data);
+                    System.out.println(ArrayUtils.toString(base64));
+                    String str = new String(data, StandardCharsets.UTF_8);
+                    System.out.println("getString = " + rs.getString(2));
+                    System.out.println("getObject.toString = " + rs.getObject(2).toString());
+                    System.out.println("Hex string = " + BaseEncoding.base16().upperCase().encode(data));
+
+                    String string = new String(Base64.decode(base64), "UTF-8");
+                    System.out.println("Decoded UTF-8 string = " + string);
+                    System.out.println("----------------------------------");
+            }
+        }
+        catch (Exception e) {
+            e.printStackTrace();
+            throw e;
+        }
+    }
+
+    @Test
+    void runQuery() throws Exception {
+
+        //runExecuteQuery("SELECT SPLIT('str-tgf-hdjkf', '-', 2)", true);
+        runExecuteQuery("SELECT num0,num2,num3,num4, (CASE WHEN (num0 > 3000) THEN num2 WHEN NOT (num0 > 3000) THEN num3 ELSE num4 END) from Calcs", VALUES_ONLY);
+
+    }
+
+    @Test
+    void runINLiteral() throws Exception {
+
+        runExecuteQuery("SELECT str2, key, int1 FROM Calcs", VALUES_ONLY);
+        runExecuteQuery("SELECT str2, key, int1 FROM Calcs WHERE int1 IN (3)", VALUES_ONLY);
+
+    }
+
+    @Test
+    void testMIN() throws Exception {
+        //runExecuteQuery("SELECT int0, int1, (CASE WHEN (\"Calcs\".\"int0\" < \"Calcs\".\"int1\") THEN \"Calcs\".\"int0\" ELSE \"Calcs\".\"int1\" END) AS \"MinVal\" FROM Calcs group by MinVal", true);
+        runExecuteQuery("SELECT int0, int1, (CASE WHEN (\"Calcs\".\"int0\" > \"Calcs\".\"int1\") THEN \"Calcs\".\"int0\" ELSE \"Calcs\".\"int1\" END) AS \"MaxVal\" FROM Calcs", VALUES_ONLY);
+        //runExecuteQuery("SELECT int0, int1, SPLIT(str0, ' ', 1) as gpVal FROM Calcs group by gpVal", true);
+    }
+
+    @Test
+    void testDateLiteralAsInt() throws Exception {
+
+        runExecuteQuery("SELECT CAST(date AS DOUBLE) as toto FROM Calcs group by toto", VALUES_ONLY);
+        //runExecuteQuery("SELECT '$__alias__1' FROM Calcs", true);
+
+    }
+
+    //db.aggregate([{$sql: {statement: "SELECT * FROM (SELECT SUM(\"Calcs\".\"num1\") AS \"__measure__0\" FROM \"Calcs\" HAVING (COUNT(1) > 0)) \"t0\" CROSS JOIN (SELECT AVG(\"t1\".\"__measure__0\") AS \"__measure__1\" FROM (SELECT SUM(\"Calcs\".\"num1\") AS \"__measure__0\" FROM \"Calcs\" GROUP BY \"Calcs\".\"str1\") \"t1\" HAVING (COUNT(1) > 0)) \"t2\"", format: "jdbc", formatVersion: 1, dialect: "mongosql"}}])
+    @Test
+    void testCrossJoin() throws Exception {
+
+        runExecuteQuery("SELECT SUM(\"Calcs\".\"num1\") AS \"__measure__0\"\n" +
+                "  FROM \"Calcs\"\n" +
+                "  HAVING (COUNT(1) > 0)", null);
+
+        runExecuteQuery("SELECT * FROM (SELECT SUM(\"Calcs\".\"num1\") AS \"__measure__0\"\n" +
+                "  FROM \"Calcs\"\n" +
+                "  HAVING (COUNT(1) > 0)) t0", null);
+
+        runExecuteQuery("SELECT __measure__0 FROM (SELECT SUM(\"Calcs\".\"num1\") AS \"__measure__0\"\n" +
+                "  FROM \"Calcs\"\n" +
+                "  HAVING (COUNT(1) > 0)) t0", null);
+
+        runExecuteQuery("SELECT * FROM (SELECT (\"Calcs\".\"num1\") AS \"__measure__0\"\n" +
+                "  FROM \"Calcs\") t0", null);
+
+    }
+
+    // db.aggregate([{$sql: {statement: "SELECT SUM(\"calcs\".\"num1\") AS \"__measure_0\" FROM \"calcs\" GROUP BY \"calcs\".\"str1\"", format: "jdbc", formatVersion: 1, dialect: "mongosql"}}])
+    @Test
+    void testGroupBy() throws Exception {
+
+        // OK
+        /*
+        +----------------------|----------------------+
+        | _measure_0           | str1                 |
+        +----------------------|----------------------+
+        | 10.32                | CD-R MEDIA           |
+        | 9.47                 | ANSWERING MACHINES   |
+        | 7.1                  | DOT MATRIX PRINTERS  |
+        | 6.71                 | CLOCKS               |
+        | 12.4                 | BUSINESS COPIERS     |
+        | 10.37                | CORDLESS KEYBOARDS   |
+        | 9.05                 | BINDER CLIPS         |
+        | 12.05                | CORDED KEYBOARDS     |
+        | 8.42                 | CLAMP ON LAMPS       |
+        | 16.42                | BINDING SUPPLIES     |
+        | 7.12                 | ERICSSON             |
+        | 11.38                | BUSINESS ENVELOPES   |
+        | 16.81                | DVD                  |
+        | 9.78                 | AIR PURIFIERS        |
+        | 9.38                 | BINDING MACHINES     |
+        | 2.47                 | CONFERENCE PHONES    |
+        | 7.43                 | BINDER ACCESSORIES   |
+        +----------------------|----------------------+
+         */
+        runExecuteQuery("SELECT \"Calcs\".\"str1\", SUM(\"Calcs\".\"num1\") AS \"_measure_0\" FROM \"Calcs\" GROUP BY \"Calcs\".\"str1\"", VALUES_ONLY);
+
+        // OK
+        /*
+        +----------------------+
+        | __measure__0         |
+        +----------------------+
+        | 166.68               |
+        +----------------------+
+         */
+        runExecuteQuery("SELECT SUM(\"Calcs\".\"num1\") AS \"__measure__0\"\n" +
+                "  FROM \"Calcs\"\n" +
+                "  HAVING (COUNT(1) > 0)\n", VALUES_ONLY);
+
+        // OK
+        /*
+        +----------------------+
+        | __measure__1         |
+        +----------------------+
+        | 9.804705882352941    |
+        +----------------------+
+         */
+        runExecuteQuery("SELECT AVG(\"t1\".\"__measure__0\") AS \"__measure__1\"\n" +
+                "  FROM (\n" +
+                "    SELECT SUM(\"Calcs\".\"num1\") AS \"__measure__0\"\n" +
+                "    FROM \"Calcs\"\n" +
+                "    GROUP BY \"Calcs\".\"str1\"\n" +
+                "  ) \"t1\"\n" +
+                "  HAVING (COUNT(1) > 0)", VALUES_ONLY);
+
+        /*
+        +----------------------|----------------------+
+        | __measure__0         | __measure__1         |
+        +----------------------|----------------------+
+        +----------------------|----------------------+
+         */
+        runExecuteQuery(
+                // 166.68
+                " SELECT * FROM (SELECT SUM(\"Calcs\".\"num1\") AS \"__measure__0\"\n" +
+                "  FROM \"Calcs\"\n" +
+                "  HAVING (COUNT(1) > 0)\n" +
+                ") \"t0\"\n" +
+                "  CROSS JOIN (\n" +
+                // OK
+                "  SELECT AVG(\"t1\".\"__measure__0\") AS \"__measure__1\"\n" +
+                "  FROM (\n" +
+                // OK
+                "    SELECT SUM(\"Calcs\".\"num1\") AS \"__measure__0\"\n" +
+                "    FROM \"Calcs\"\n" +
+                "    GROUP BY \"Calcs\".\"str1\"\n" +
+                "  ) \"t1\"\n" +
+                "  HAVING (COUNT(1) > 0)\n" +
+                ") \"t2\"", VALUES_ONLY);
+
+        runExecuteQuery("SELECT (\"t0\".\"__measure__0\" / \"t2\".\"__measure__1\") AS \"TEMP(Test)(3502400386)(0)\"\n" +
+                "FROM (\n" +
+                // 166.68
+                "  SELECT SUM(\"Calcs\".\"num1\") AS \"__measure__0\"\n" +
+                "  FROM \"Calcs\"\n" +
+                "  HAVING (COUNT(1) > 0)\n" +
+                ") \"t0\"\n" +
+                "  CROSS JOIN (\n" +
+                // 9.804705882352941
+                "  SELECT AVG(\"t1\".\"__measure__0\") AS \"__measure__1\"\n" +
+                "  FROM (\n" +
+                    // OK
+                "    SELECT SUM(\"Calcs\".\"num1\") AS \"__measure__0\"\n" +
+                "    FROM \"Calcs\"\n" +
+                "    GROUP BY \"Calcs\".\"str1\"\n" +
+                "  ) \"t1\"\n" +
+                "  HAVING (COUNT(1) > 0)\n" +
+                ") \"t2\"", VALUES_ONLY);
+    }
+
+    @Test
+    void runInTest() throws Exception {
+        try {
+
+            //runExecuteQuery("SELECT 'six'", false);
+            //runExecuteQuery("SELECT 'six'", true);
+
+            //runExecuteQuery("SELECT subCalcs.str2 as substr2 from Calcs as subCalcs where subCalcs.str2 = 'six'", false);
+            //runExecuteQuery("SELECT subCalcs.str2 as substr2 from Calcs as subCalcs where subCalcs.str2 = 'six'", true);
+
+            //runExecuteQuery("SELECT Calcs.str2, Calcs.key,Calcs.int1 FROM Calcs AS Calcs WHERE Calcs.str2 IN (SELECT subCalcs.str2 as _six from Calcs as subCalcs WHERE subCalcs.str2 = 'six')", true);
+
+            //runExecuteQuery("SELECT VALUE {'str2': Calcs.str2, 'key': Calcs.key, 'int1': Calcs.int1} FROM Calcs AS Calcs WHERE Calcs.str2 = ANY(SELECT 'six')", true);
+
+
+            //runExecuteQuery("SELECT Calcs.str2,Calcs.key, Calcs.int1  FROM Calcs WHERE Calcs.int1 IN (SELECT subCalcs.int1 as subint1 from Calcs as subCalcs where subCalcs.int1 = 3)", true);
+
+
+            //runExecuteQuery("SELECT VALUE {'str2': Calcs.str2, 'key': Calcs.key, 'int1': Calcs.int1} FROM Calcs AS Calcs WHERE Calcs.str2 = ANY(SELECT subCalcs.str2 as _six from Calcs as subCalcs WHERE subCalcs.str2 = 'six')", true);
+
+
+            //runExecuteQuery("SELECT * FROM Calcs WHERE Calcs.int1 IN (SELECT subCalcs.int1 as subint1 from Calcs as subCalcs where subCalcs.int1 = 3 OR  subCalcs.int1 = 6)", true);
+            runExecuteQuery("SELECT * FROM Calcs WHERE Calcs.int1 IN (SELECT _1 from [{'_1': 3}, {'_1': 6}] AS _arr)", VALUES_ONLY);
+
+            //runExecuteQuery("SELECT VALUE {'_1': _1} FROM [{'_1': 3}, {'_1': 6}] AS _arr", false);
+            //runExecuteQuery("SELECT VALUE {'_1': _1} FROM [{'_1': 3}, {'_1': 6}] AS _arr", true);
+
+
+            //runExecuteQuery("SELECT * FROM Calcs AS Calcs WHERE Calcs.int1 = ANY(SELECT VALUE {'_1': _1} FROM [{'_1': 3}, {'_1': 6}] AS _arr)", true);
+
+
+            //runExecuteQuery("SELECT VALUE {'a': a} FROM [{'a': 1, 'b': 1}] AS arr", false);
+
+            //runExecuteQuery("SELECT VALUE {'a': a} FROM [{'a': 1, 'b': 1}] AS arr", true);
+
+
+            //runExecuteQuery("SELECT VALUE {'str2': Calcs.str2, 'key': Calcs.key, 'int1': Calcs.int1} FROM Calcs AS Calcs WHERE Calcs.int1 = ANY(SELECT VALUE _1 FROM [{'_1': 3}] AS _arr)", true);
+
+
+            //runExecuteQuery("SELECT VALUE {'str2': Calcs.str2, 'key': Calcs.key, 'int1': Calcs.int1} FROM Calcs AS Calcs WHERE Calcs.int1 = ANY(SELECT VALUE _1 FROM [{'_1': 3}] AS _arr)", true);
+        }
+        catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Test
     void tryExecute() throws Exception {
-        runExecuteQuery("select * from bar", true);
+        try {
+            //runExecuteQuery("SELECT str2, (CASE WHEN (str2 IN ('eleven', 'fifteen', 'five', 'fourteen', 'nine', 'one', 'six', 'sixteen', 'ten', 'three', 'twelve')) THEN 'InSet' ELSE str2 END) AS \"Str2Gp\" FROM Calcs", VALUES_ONLY);
+           // runExecuteQuery("SELECT (CASE WHEN (str2 IN ('eleven', 'fifteen', 'five', 'fourteen', 'nine', 'one', 'six', 'sixteen', 'ten', 'three', 'twelve')) THEN 'InSet' ELSE str2 END) AS \"Str2Gp\" FROM Calcs group by Str2Gp", VALUES_ONLY);
+
+
+            runExecuteQuery("SELECT t0.`__measure__0` " +
+                            //", FLOOR(SUM(\"Staples\".\"Sales Total\")) AS \"sum:Sales Total:ok\",\n" +
+                            "  , EXTRACT(WEEK FROM \"t0\".\"__measure__0\") AS \"wk:LOD - Fixed(copy 2):ok\"\n" +
+                            //",  EXTRACT(YEAR FROM \"Staples\".\"Order Date\") AS \"yr:Order Date:ok\"\n" +
+                            " FROM \"Staples\"\n" +
+                            "  INNER JOIN (\n" +
+                            "  SELECT \"Staples\".\"Customer Name\" AS \"Customer Name\",\n" +
+                            "    MIN(\"Staples\".\"Order Date\") AS \"__measure__0\"\n" +
+                            "  FROM \"Staples\"\n" +
+                            "  GROUP BY \"Customer Name\"\n" +
+                            ") \"t0\" ON ((\"Staples\".\"Customer Name\" = \"t0\".\"Customer Name\") OR ((\"Staples\".\"Customer Name\" IS NULL) AND (\"t0\".\"Customer Name\" IS NULL))) limit 10\n" +
+                            //"GROUP BY \"wk:LOD - Fixed(copy 2):ok\",\n" +
+                            //"  \"yr:Order Date:ok\"" +
+                            ""
+                    , ALL);
+
+//            runExecuteQuery(" SELECT key, date0 " +
+//            "FROM \"Calcs\"\n" +
+//            " WHERE (\"Calcs\".\"date0\" IN (select subCalcs.date0 from Calcs as subCalcs where subCalcs.date0 = (CAST('1972-07-04 00:00:00.000' AS TIMESTAMP)) OR subCalcs.date0 = (CAST('1975-11-12 00:00:00.000' AS TIMESTAMP)) OR subCalcs.date0 = (CAST('2004-06-19 00:00:00.000' AS TIMESTAMP))))\n" +
+//
+//            //        " WHERE (\"Calcs\".\"date0\" IN (CAST('1972-07-04 00:00:00.000' AS TIMESTAMP), CAST('1975-11-12 00:00:00.000' AS TIMESTAMP), CAST('2004-06-19 00:00:00.000' AS TIMESTAMP)))\n" +
+//            /*"GROUP BY \"key\""*/
+//            ""
+//            , ALL);
+        }
+        catch (Exception e) {
+            e.printStackTrace();
+        }
+        /*
+        try {
+            //  "t0"."__measure__0",  "t2"."__measure__1", ("t0"."__measure__0" / "t2"."__measure__1") AS "TEMP(Test)(3502400386)(0)"
+            runExecuteQuery(" SELECT CAST(2050-01-01 AS DOUBLE) AS \"TEMP(Test)(3947742720)(0)\"\n" +
+                            "FROM \"Calcs\"\n" +
+                            "HAVING (COUNT(1) > 0)"
+                    , true);
+        }
+        catch (Exception e) {
+            e.printStackTrace();
+        }
+         */
+
+
+
+                /*
+        "SELECT AVG(\"t1\".\"__measure__0\") AS \"__measure__1\"\n" +
+                            "  FROM (\n" +
+                            "    SELECT \"Calcs\".\"str1\", SUM(\"Calcs\".\"num1\") AS \"__measure__0\"\n" +
+                            "    FROM \"Calcs\"\n" +
+                            "    GROUP BY \"Calcs\".\"str1\"\n" +
+                            "  ) \"t1\"\n" +
+                            "  HAVING (COUNT(1) > 0)\n"
+                           -->
+                           __measure__1 = 9.804705882352941
+
+         "SELECT SUM(\"Calcs\".\"num1\") AS \"__measure__0\"\n" +
+                            "  FROM \"Calcs\"\n" +
+                            "  HAVING (COUNT(1) > 0)"
+                            __measure__0  = 166.68
+         */
+    }
+
+    /*
+CREATE TABLE test (
+  id INT,
+  strVal VARCHAR(250)
+);
+INSERT INTO test VALUES (0, 'totoalaplage');
+INSERT INTO test VALUES (1, '');
+INSERT INTO test VALUES (2, NULL);
+INSERT INTO test VALUES (3, 'a');
+INSERT INTO test VALUES (4, 'b');
+INSERT INTO test VALUES (5, 'ab');
+INSERT INTO test VALUES (6, 'ba');
+INSERT INTO test VALUES (7, 'ala');
+     */
+    @Test
+    void tryFINDStringSubstringStart() throws Exception {
+        // SELECT _id, strVal, POSITION('la' IN SUBSTRING(strVal FROM (2-1) FOR CHAR_LENGTH(strVal))) from test_string_collection
+        String queryPattern = "SELECT '%s' as `sub_start`, '%s' as `sub_find`, _id, strVal, (CASE WHEN pos >= 0 THEN (pos + %d) ELSE 0 END) as idx, (CASE WHEN pos >= 0 THEN (SUBSTRING(strVal FROM (pos + %d -1) FOR CHAR_LENGTH(strVal))) ELSE NULL END) as subst from (SELECT _id, strVal, (POSITION('%s' IN SUBSTRING(strVal FROM (%d-1) FOR CHAR_LENGTH(strVal)))) pos FROM test_string_collection) as test_string_collection_pos";
+        List<Pair<String, Integer>> tests = new ArrayList<>();
+        tests.add(new Pair<String, Integer>("la", 1));
+        tests.add(new Pair<String, Integer>("la", 2));
+        tests.add(new Pair<String, Integer>("la", 3));
+        tests.add(new Pair<String, Integer>("la", 6));
+        tests.add(new Pair<String, Integer>("la", 7));
+        tests.add(new Pair<String, Integer>("la", 20));
+        tests.add(new Pair<String, Integer>("a", 1));
+        tests.add(new Pair<String, Integer>("a", 2));
+        for (Pair<String, Integer> elem : tests) {
+            String query = String.format(queryPattern, elem.right(), elem.left(), elem.right(), elem.right(), elem.left(), elem.right());
+            System.out.println("Query " + query);
+            runExecuteQuery(query, VALUES_ONLY);
+        }
+
+        String query = "SELECT _id, strVal, (POSITION('lo' IN SUBSTRING(strVal FROM 3 FOR 2))) pos FROM test_string_collection";
+        System.out.println("Query " + query);
+        runExecuteQuery(query, VALUES_ONLY);
+    }
+    @Test
+    void tryLEFTStringNumber() throws Exception {
+        String queryPattern = "SELECT _id, strVal, '%s' as `number`, (SUBSTRING(strVal FROM 0 FOR %d)) as `left` FROM test_string_collection";
+        int[] tests = new int[] {0,1,2,3,4,5,20};
+
+        for (int elem : tests) {
+            String query = String.format(queryPattern, elem, elem);
+            System.out.println("Query " + query);
+            runExecuteQuery(query, VALUES_ONLY);
+        }
+    }
+
+    @Test
+    void tryMIDStringNumberNumber() throws Exception {
+        String queryPattern = "SELECT _id, strVal, '%s' as `number`, (SUBSTRING(strVal FROM (%d - 1) FOR CHAR_LENGTH(strVal))) as `mid` FROM test_string_collection";
+        int[] tests = new int[] {1,2,3,11,12,20};
+
+        for (int elem : tests) {
+            String query = String.format(queryPattern, elem, elem);
+            System.out.println("Query " + query);
+            runExecuteQuery(query, VALUES_ONLY);
+        }
+    }
+
+    @Test
+    void tryMIDStringNumberZero() throws Exception {
+        String queryPattern = "SELECT _id, strVal, '%s' as `number`, (SUBSTRING(strVal FROM (%d - 1) FOR 0)) as `mid` FROM test_string_collection";
+        int[] tests = new int[] {1,2,3,11,12,20};
+
+        for (int elem : tests) {
+            String query = String.format(queryPattern, elem, elem);
+            System.out.println("Query " + query);
+            runExecuteQuery(query, VALUES_ONLY);
+        }
+    }
+
+    @Test
+    void trySTARTSWITHStringSubString() throws Exception {
+
+        String query = "SELECT _id, strVal, (POSITION('toto' IN (TRIM(LEADING FROM strVal))) = 0) as `startswith` FROM test_string_collection";
+
+        runExecuteQuery(query, VALUES_ONLY);
+
+    }
+
+
+    @Test
+    void trySTDDEV() throws Exception {
+        String query = "select STDDEV_POP(studentid) as `STDDEV_POP`, CAST(STDDEV_POP(studentid) * STDDEV_POP(studentid) AS DECIMAL) as `VAR_POP` from grades";
+        //String query = "select studentid, STDDEV_POP(score) as `STDDEV_POP`, CAST(STDDEV_POP(score) * STDDEV_POP(score) AS DECIMAL) as `VAR_POP` from grades group by studentid";
+        runExecuteQuery(query, METADATA_ONLY);
+        runExecuteQuery(query, VALUES_ONLY);
+        Statement stmt = m_conn.createStatement();
+        ResultSet rs = stmt.executeQuery(query);
+        rs.next();
+        double stddev = rs.getDouble(1);
+        BigDecimal bd = new BigDecimal(stddev);
+        double varp = stddev * stddev;
+        BigDecimal varpBd = bd.multiply(bd);
+        System.out.println("stddev = " + stddev + ", varp = " + varp + ", varp bigDecimal = " + varpBd);
     }
 
     @Test
     void tryExecutePrintMetadata() throws Exception {
-        runExecuteQuery("select * from foo", false);
+        runExecuteQuery("select * from Calcs", METADATA_ONLY);
     }
 
     @Test
@@ -77,8 +556,8 @@ public abstract class TestUtils {
 
     @Test
     void tryGetColumns() throws Exception {
-        //ResultSet rs = m_dbMeta.getColumns(null, null, null, null);
-        ResultSet rs = m_dbMeta.getColumns(null, "%", "%", "%");
+        ResultSet rs = m_dbMeta.getColumns(null, null, "binaryData", null);
+        //ResultSet rs = m_dbMeta.getColumns(null, "%", "%", "%");
         printRsInfo(rs);
     }
 
@@ -384,19 +863,29 @@ public abstract class TestUtils {
     /**
      * Execute the given query and print either the resultset contents or its metadata.
      * @param query             The query to execute.
-     * @param printRs           A flag to turn on printing the resultset content when true or the resultset metadata when false.
+     * @param rsPrintTypes      A list of things to print out. It can be : the values, the metadata or the json schema.
      * @throws Exception        If an error occurs while executing the query or retrieving the values to display.
      */
-    private void runExecuteQuery(String query, boolean printRs) throws Exception {
+    void runExecuteQuery(String query, Set<RsPrintType> rsPrintTypes) throws Exception {
         try {
             Statement stmt = m_conn.createStatement();
             ResultSet rs = stmt.executeQuery(query);
-            if (printRs) {
-                PrintUtils.printResultSet(rs);
+            if (rs.getMetaData().getColumnCount() > 0) {
+                rs.getMetaData().isCaseSensitive(1);
             }
-            else {
+            if (null == rsPrintTypes || rsPrintTypes.contains(RsPrintType.METADATA)) {
                 PrintUtils.printResultSetMetadata(rs.getMetaData());
             }
+
+            if (null == rsPrintTypes ||rsPrintTypes.contains(RsPrintType.VALUES)) {
+                PrintUtils.printResultSet(rs);
+            }
+
+            if (null == rsPrintTypes ||rsPrintTypes.contains(RsPrintType.JSON_SCHEMA)) {
+                MongoResultSet mrs = rs.unwrap(MongoResultSet.class);
+               System.out.println(mrs.getJsonSchema());
+            }
+
         }
         catch (Exception e) {
             e.printStackTrace();

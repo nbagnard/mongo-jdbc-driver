@@ -170,7 +170,7 @@ public class MongoDriver implements Driver {
             try {
                 conn.testConnection(conn.getDefaultConnectionValidationTimeoutSeconds());
             } catch (TimeoutException te) {
-                throw new SQLTimeoutException("Timeout. Can't connect.");
+                throw new SQLTimeoutException("Timeout. Can't connect.", te);
             } catch (Exception e) {
                 throw new SQLException("Connection failed.", e);
             }

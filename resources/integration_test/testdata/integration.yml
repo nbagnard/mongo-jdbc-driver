@@ -1,5 +1,91 @@
 dataset:
   - db: integration_test
+    collection: Transactions
+    docs:
+      - {_id: 0, account_id: 10329,  transaction_count: 2, bucket_start_date: 2000-01-01, bucket_end_date: 2000-01-02, transactions: [10, 20 , 30, 40] }
+      - {_id: 1, account_id: 54545,  transaction_count: 150, bucket_start_date: 2010-08-25, bucket_end_date: 2010-09-25, transactions: [5, 25 , 35, 45]}
+      - {_id: 2, account_id: 7475,  transaction_count: 5, bucket_start_date: 1815-11-01, bucket_end_date: 1815-12-04, transactions: [1, 2 , 3, 4]}
+      - {_id: 3, account_id: 54545,  transaction_count: 1, bucket_start_date: 1965-02-02, bucket_end_date: 1966-02-02, transactions: [10000 ] }
+
+    schema: {
+      bsonType: [ "object" ],
+      properties: {
+          bucket_end_date: { bsonType: [ "date" ] },
+          transactions: {
+            bsonType: [ "array" ],
+            items: { bsonType: "int"}
+          },
+          _id: { bsonType: [ "objectId" ] },
+          account_id: { bsonType: [ "int" ] },
+          transaction_count: { bsonType: [ "int" ] },
+          bucket_start_date: { bsonType: [ "date" ] }
+        }
+      }
+  - db: integration_test
+    collection: Accounts
+    docs:
+      - {_id: 0, account_id: 10329,  limit: 6, products: ["one thing", "or another"] }
+      - {_id: 1, account_id: 54545,  limit: 12, products: ["produit", "product"] }
+      - {_id: 2, account_id: 7475,  limit: 0, products: ["this", "that"] }
+    schema: {
+      bsonType: [ "object" ],
+      properties: {
+        account_id: { bsonType: [ "int" ] },
+        limit: { bsonType: [ "int" ] },
+        products: { bsonType: [ "array" ], items: [ { bsonType: "string"} ] },
+        _id: { bsonType: [ "objectId" ] }
+      }
+    }
+
+  - db: integration_test
+    collection: test_string_collection
+    docs:
+      - { _id: 0, strVal: "totoalaplage" }
+      - { _id: 1, strVal: "" }
+      - { _id: 2 }
+      - { _id: 3, strVal: "a" }
+      - { _id: 4, strVal: "b" }
+      - { _id: 5, strVal: "ab" }
+      - { _id: 6, strVal: "ba" }
+      - { _id: 7, strVal: "ala" }
+      - { _id: 8, strVal: "      totoalaplage" }
+
+  - db: integration_test
+    collection: test_split
+    docs:
+      - { _id: 0, strVal: "abcd" }
+      - { _id: 1, strVal: "" }
+      - { _id: 2 }
+      - { _id: 3, strVal: "a-b-c-d" }
+      - { _id: 4, strVal: "a/\\b/\\c/\\d" }
+      - { _id: 5, strVal: "ag/\\bh/\\cj/\\dk" }
+      - { _id: 6, strVal: "∫a∫b∫c∫d∫" }
+      - { _id: 8, strVal: "      abcd" }
+      - { _id: 9, strVal: "λ€bee€寿€d" }
+
+  - db: integration_test
+    collection: test_split_translation
+    docsExtJson:
+      - {'_id': 0, 'str': '', 'delim': '-', 'tokenNum': { '$numberInt': '0' }}
+      - {'_id': 1, 'str': 'abcd', 'delim': '-', 'tokenNum': { '$numberInt': '0' }}
+      - {'_id': 2, 'str': 'abcd', 'delim': null, 'tokenNum': { '$numberInt': '0' }}
+      - {'_id': 3, 'str': 'a-bee-c-d', 'delim': '-', 'tokenNum': { '$numberInt': '1' }}
+      - {'_id': 4, 'str': 'a-bee-c-d', 'delim': '-', 'tokenNum': { '$numberInt': '-2' }}
+      - {'_id': 5, 'str': 'a-bee-c-d', 'delim': '-', 'tokenNum': { '$numberInt': '0' }}
+      - {'_id': 6, 'str': 'a-bee-c-d', 'delim': '-', 'tokenNum': { '$numberInt': '7' }}
+      - {'_id': 7, 'str': 'a-bee-c-d', 'delim': '-', 'tokenNum': { '$numberInt': '-7' }}
+      - {'_id': 8, 'str': 'a/\bee/\c/\d', 'delim': '/\', 'tokenNum': { '$numberInt': '2' }}
+      - {'_id': 9, 'str': null, 'delim': '-', 'tokenNum': { '$numberInt': '0' }}
+      - {'_id': 10, 'str': 'a-bee-c-d', 'delim': null, 'tokenNum': { '$numberInt': '0' }}
+      - {'_id': 11, 'str': 'a-bee-c-d', 'delim': '-', 'tokenNum': null}
+      - {'_id': 12, 'delim': '-', 'tokenNum': { '$numberInt': '0' } }
+      - {'_id': 13, 'str': 'a-bee-c-d', 'tokenNum': { '$numberInt': '0' } }
+      - {'_id': 14, 'str': 'a-bee-c-d', 'delim': '-' }
+      - {'_id': 17, 'str': 'λ-bee-寿-d', 'delim': '-', 'tokenNum': { '$numberInt': '2' }}
+      - {'_id': 18, 'str': 'λ€bee€寿€d', 'delim': '€', 'tokenNum': { '$numberInt': '2' }}
+      - {'_id': 19}
+
+  - db: integration_test
     collection: class
     docs:
       - {_id: 0, studentid: 10329,  name: "John", enrolled: true, startdate: 2000-01-01 }
@@ -23,10 +109,11 @@ dataset:
 
   - db: integration_test
     collection: anyof_collection
-    docs:
-      - { _id: 0, a: 3 }
-      - { _id: 1, a: 3000000000 }
-      - { _id: 2, a: 4.5 }
+    docsExtJson:
+      - { _id: 0, a: {"$numberInt": "3" } }
+      - { _id: 1, a: {"$numberLong": "3000000000"} }
+      - { _id: 2, a: {"$numberDouble": "4.5"} }
+      - { _id: 3, a: {"$numberDecimal": "1234.5"}}
     schema: {
               "bsonType":[
                   "object"
@@ -36,7 +123,8 @@ dataset:
                   "bsonType":[
                       "long",
                       "double",
-                      "int"
+                      "int",
+                      "decimal"
                   ]
                 },
                 "_id":{
@@ -109,3 +197,16 @@ dataset:
 
   - db: integration_test
     view: baz
+
+  - db: integration_test
+    collection: "binaryData"
+    docsExtJson:
+      - {
+        _id: 1,
+        val: { "$binary":
+                 {
+                   "base64": "dGl0aSDDoCBsYSBwbGFnZQ==",
+                   "subType": "0"
+                 }
+        }
+      }

@@ -63,6 +63,16 @@ public class DataLoader {
     private MongoClientURI mdbUri;
     private MongoClientURI adlUri;
 
+    public DataLoader(String dataDirectory, String mdbUri, String adlUri) throws IOException {
+        this.datasets = new ArrayList<>();
+        this.collections = new HashSet<>();
+        this.databases = new HashSet<>();
+        this.mdbUri = new MongoClientURI(mdbUri);
+        this.adlUri = new MongoClientURI(adlUri);
+
+        readDataFiles(dataDirectory);
+    }
+
     public DataLoader(String dataDirectory) throws IOException {
         this.datasets = new ArrayList<>();
         this.collections = new HashSet<>();

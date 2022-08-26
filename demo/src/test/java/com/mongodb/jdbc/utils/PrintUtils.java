@@ -50,6 +50,7 @@ public class PrintUtils {
                 row[8] = String.valueOf(rsMeta.getScale(i));
                 row[9] = rsMeta.getColumnClassName(i);
                 row[10] = rsMeta.getColumnLabel(i);
+                rsMeta.isCaseSensitive(i);
 
                 while (hasMoreData) {
                     hasMoreData = false;
@@ -112,6 +113,12 @@ public class PrintUtils {
                 hasMoreData = false;
                 for (int i = 0; i < columnCount; i++) {
                     if (row[i] == null) {
+                        //System.out.println(rs.getInt(i+1));
+                        /*if (rs.getMetaData().getColumnType(i+1) == 8)
+                        {
+                            Double d = rs.getDouble(i+1);
+                            System.out.println("Value " + rs.getString(i + 1) + " is NaN : " + d.isNaN());
+                        }*/
                         cellValue = rs.getString(i + 1);
                         row[i] = (cellValue == null ? NULL_STR : cellValue);
                     }

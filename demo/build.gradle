@@ -9,9 +9,11 @@ application {
 dependencies {
 
     implementation 'org.junit.jupiter:junit-jupiter:5.7.0'
+    implementation 'com.opencsv:opencsv:3.7'
+    implementation "org.yaml:snakeyaml:$snakeYamlVersion"
     compile rootProject
 }
 
 test {
-    exclude 'com/mongodb/jdbc/utils/**'
+   //exclude 'com/mongodb/jdbc/utils/**'
 }
