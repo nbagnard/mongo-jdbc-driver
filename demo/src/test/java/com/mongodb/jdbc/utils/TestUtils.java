@@ -376,21 +376,39 @@ public abstract class TestUtils {
            // runExecuteQuery("SELECT (CASE WHEN (str2 IN ('eleven', 'fifteen', 'five', 'fourteen', 'nine', 'one', 'six', 'sixteen', 'ten', 'three', 'twelve')) THEN 'InSet' ELSE str2 END) AS \"Str2Gp\" FROM Calcs group by Str2Gp", VALUES_ONLY);
 
 
-            runExecuteQuery("SELECT t0.`__measure__0` " +
-                            //", FLOOR(SUM(\"Staples\".\"Sales Total\")) AS \"sum:Sales Total:ok\",\n" +
-                            "  , EXTRACT(WEEK FROM \"t0\".\"__measure__0\") AS \"wk:LOD - Fixed(copy 2):ok\"\n" +
-                            //",  EXTRACT(YEAR FROM \"Staples\".\"Order Date\") AS \"yr:Order Date:ok\"\n" +
-                            " FROM \"Staples\"\n" +
-                            "  INNER JOIN (\n" +
-                            "  SELECT \"Staples\".\"Customer Name\" AS \"Customer Name\",\n" +
-                            "    MIN(\"Staples\".\"Order Date\") AS \"__measure__0\"\n" +
-                            "  FROM \"Staples\"\n" +
-                            "  GROUP BY \"Customer Name\"\n" +
-                            ") \"t0\" ON ((\"Staples\".\"Customer Name\" = \"t0\".\"Customer Name\") OR ((\"Staples\".\"Customer Name\" IS NULL) AND (\"t0\".\"Customer Name\" IS NULL))) limit 10\n" +
-                            //"GROUP BY \"wk:LOD - Fixed(copy 2):ok\",\n" +
-                            //"  \"yr:Order Date:ok\"" +
-                            ""
-                    , ALL);
+            /*
+
+            select
+	  s.stock.plantname plantname ,
+	SUM(s.stock.quantity) quantity,
+	SUM( s.stock.quantity * s.stock.price / fx.rate) total,
+	MAX(s.stock.price / fx.rate) as mostexpensive
+from
+	UNWIND(LeafyData.Sellers s,
+	fxrates fx WITH PATH => stock )
+WHERE
+	s.currency = fx.currency
+group by
+	plantname
+order by
+	plantname
+             */
+
+            //SELECT * from unwind(Transactions t, customers c with path => c.accounts) where t.account_id = c.accounts ==> 13570ms
+
+            /*
+                    runExecuteQuery("SELECT transactions.`symbol` as symb, SUM(transactions.price::FLOAT) from unwind(Transax t, Accounts c with path => transactions) where t.account_id = c.account_id group by symb"
+                    ,VALUES_ONLY); ==> 55803ms
+
+                     runExecuteQuery("SELECT transactions.`symbol` as symb, SUM(transactions.price::FLOAT/`limit`) from unwind(Transax t, Accounts c with path => transactions) where t.account_id = c.account_id group by symb"
+                    ,VALUES_ONLY); ==> 51820ms
+                    runExecuteQuery("SELECT transactions.`symbol` as symb, SUM(transactions.price::FLOAT/`limit`) from unwind((SELECT t.transactions, c.`limit` FROM Transax t, Accounts c where t.account_id = c.account_id) sub with path => sub.transactions) group by symb"
+                    ,ALL); ==> 52137ms
+             */
+
+            //runExecuteQuery("SELECT joined.transactions.`symbol`, SUM(joined.price/`limit`) FROM ((SELECT t.account_id, t.transactions.`symbol`, t.price, c.`limit` from unwind(Transax t with path => transactions)) sub, Accounts c where sub.account_id = c.account_id) joined", VALUES_ONLY);
+                         runExecuteQuery("select ProductSold from Transactions group by ProductSold", VALUES_ONLY);
+
 
 //            runExecuteQuery(" SELECT key, date0 " +
 //            "FROM \"Calcs\"\n" +
@@ -556,7 +574,7 @@ INSERT INTO test VALUES (7, 'ala');
 
     @Test
     void tryGetColumns() throws Exception {
-        ResultSet rs = m_dbMeta.getColumns(null, null, "binaryData", null);
+        ResultSet rs = m_dbMeta.getColumns(null, null, "Transactions", null);
         //ResultSet rs = m_dbMeta.getColumns(null, "%", "%", "%");
         printRsInfo(rs);
     }
@@ -869,7 +887,12 @@ INSERT INTO test VALUES (7, 'ala');
     void runExecuteQuery(String query, Set<RsPrintType> rsPrintTypes) throws Exception {
         try {
             Statement stmt = m_conn.createStatement();
+            long startTime = System.nanoTime();
+
             ResultSet rs = stmt.executeQuery(query);
+            long endTime = System.nanoTime();
+            long timeElapsed = endTime - startTime;
+            System.out.println("Execution time in milliseconds: " + timeElapsed / 1000000);
             if (rs.getMetaData().getColumnCount() > 0) {
                 rs.getMetaData().isCaseSensitive(1);
             }
