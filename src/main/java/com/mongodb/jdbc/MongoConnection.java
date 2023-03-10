@@ -25,6 +25,7 @@ import com.mongodb.client.MongoDatabase;
 import com.mongodb.jdbc.logging.AutoLoggable;
 import com.mongodb.jdbc.logging.DisableAutoLogging;
 import com.mongodb.jdbc.logging.MongoLogger;
+import com.mongodb.jdbc.mongosql.TranslationHelpers;
 import java.io.File;
 import java.io.IOException;
 import java.sql.Array;
@@ -69,6 +70,9 @@ import org.bson.Document;
 public class MongoConnection implements Connection {
     private MongoClientSettings mongoClientSettings;
     protected MongoClient mongoClient;
+
+    protected MongoDatabase schemaCacheDB;
+
     protected String currentDB;
     protected String url;
     protected String user;
@@ -82,6 +86,8 @@ public class MongoConnection implements Connection {
     private static Map<String, FileHandler> fileHandlers = new HashMap<String, FileHandler>();
     private String logDirPath;
     private boolean extJsonMode;
+
+    private Boolean isConnectingToDataFed = null;
 
     public MongoConnection(MongoConnectionProperties connectionProperties) {
         Preconditions.checkNotNull(connectionProperties.getConnectionString());
@@ -105,6 +111,10 @@ public class MongoConnection implements Connection {
 
         // Log the driver name and version
         logger.log(Level.INFO, "Connecting using " + MongoDriver.MONGO_DRIVER_NAME + " " + version);
+        logger.log(Level.SEVERE, "url " + url);
+        logger.log(Level.SEVERE, "user " + user);
+        logger.log(Level.SEVERE, "currentDB " + currentDB);
+        logger.log(Level.SEVERE, "extJsonMode " + extJsonMode);
 
         MongoDriverInformation.Builder mdiBuilder;
         String clientInfo = connectionProperties.getClientInfo();
@@ -123,12 +133,15 @@ public class MongoConnection implements Connection {
         MongoDriverInformation mongoDriverInformation =
                 mdiBuilder.driverName(MongoDriver.NAME).driverVersion(version).build();
 
+        System.out.println(appName.toString());
         this.mongoClientSettings =
                 MongoClientSettings.builder()
                         .applicationName(appName.toString())
                         .applyConnectionString(connectionProperties.getConnectionString())
                         .build();
         mongoClient = MongoClients.create(mongoClientSettings, mongoDriverInformation);
+
+        schemaCacheDB = mongoClient.getDatabase("JsonSchemaCache");
 
         isClosed = false;
     }
@@ -247,7 +260,13 @@ public class MongoConnection implements Connection {
         if (isClosed()) {
             return;
         }
-        mongoClient.close();
+
+        try {
+            //mongoClient.close();
+        } catch (Exception e) {
+            // close does not throw
+            //logger.log(Level.INFO, e.getMessage(), e);
+        }
 
         // Decrement fileHandlerCount and delete entry
         // if no more connections are using it.
@@ -474,12 +493,16 @@ public class MongoConnection implements Connection {
     class ConnValidation implements Callable<Void> {
         @Override
         public Void call() throws SQLException {
+            // MongoServerError: $documents' is not allowed in user requests
+            /*
             Statement statement = createStatement();
+
             boolean resultExists = statement.execute("SELECT 1");
             if (!resultExists) {
                 // no resultSet returned
                 throw new SQLException("Connection error");
             }
+             */
             return null;
         }
     }
@@ -515,6 +538,28 @@ public class MongoConnection implements Connection {
             future.cancel(true);
             executor.shutdown();
         }
+    }
+
+    /**
+     * Checks if the current connection is done to a Data Federation or a raw cluster.
+     *
+     * @return true if connecting to a data federation, false otherwise.
+     */
+    protected boolean isConnectingToDataFederation() {
+        if (isConnectingToDataFed == null) {
+            BsonDocument buildInfoCmd = new BsonDocument();
+            buildInfoCmd.put("buildInfo", new BsonInt32(1));
+
+            BsonDocument result = getDatabase(currentDB).runCommand(buildInfoCmd).toBsonDocument();
+
+            isConnectingToDataFed = result.containsKey("dataLake");
+
+            if (!isConnectingToDataFederation()) {
+                // Load mongosql-j
+                TranslationHelpers.loadLib();
+            }
+        }
+        return isConnectingToDataFed;
     }
 
     @Override

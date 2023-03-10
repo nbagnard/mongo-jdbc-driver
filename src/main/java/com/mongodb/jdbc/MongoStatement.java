@@ -16,21 +16,36 @@
 
 package com.mongodb.jdbc;
 
+import static com.mongodb.client.model.Filters.exists;
+import static com.mongodb.client.model.Projections.excludeId;
+import static com.mongodb.jdbc.mongosql.Namespaces.NAMESPACES_CODEC;
+import static com.mongodb.jdbc.mongosql.TranslationResult.TRANSLATION_RESULT_CODEC_CODEC;
+
 import com.google.common.base.Preconditions;
 import com.mongodb.MongoExecutionTimeoutException;
+import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.MongoIterable;
 import com.mongodb.jdbc.logging.AutoLoggable;
 import com.mongodb.jdbc.logging.MongoLogger;
+import com.mongodb.jdbc.mongosql.*;
 import java.sql.*;
-import java.util.Collections;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
-import org.bson.BsonDocument;
-import org.bson.BsonInt32;
-import org.bson.BsonString;
+import java.util.logging.Level;
+import org.bson.*;
+import org.bson.codecs.Codec;
+import org.bson.codecs.DocumentCodec;
+import org.bson.codecs.EncoderContext;
+import org.bson.io.BasicOutputBuffer;
+import org.bson.json.JsonMode;
+import org.bson.json.JsonWriterSettings;
 
 @AutoLoggable
 public class MongoStatement implements Statement {
+
+    private static final JsonWriterSettings JSON_WRITER_SETTINGS =
+            JsonWriterSettings.builder().outputMode(JsonMode.RELAXED).indent(true).build();
     private static final BsonInt32 BSON_ONE_INT_VALUE = new BsonInt32(1);
 
     // Likely, the actual mongo sql command will not
@@ -188,34 +203,153 @@ public class MongoStatement implements Statement {
         return resultSet != null;
     }
 
+    /**
+     * * Retrieves the namespace for the current DB and sql statement.
+     *
+     * @param currentDB The current DB.
+     * @param sql The sql statement.
+     * @return all the namespaces for this statement.
+     * @throws Exception If an error occurs.
+     */
+    private Namespaces getNamespaces(String currentDB, String sql) {
+        String namespacesBase64 = TranslationHelpers.getNamespaces(currentDB, sql);
+        byte[] rawContent = Base64.getDecoder().decode(namespacesBase64);
+        Namespaces namespaces = new RawBsonDocument(rawContent).decode(NAMESPACES_CODEC);
+
+        return namespaces;
+    }
+
     @Override
     @SuppressWarnings("unchecked")
     public ResultSet executeQuery(String sql) throws SQLException {
         checkClosed();
         closeExistingResultSet();
 
-        BsonDocument stage = constructQueryDocument(sql, BSON_ONE_INT_VALUE);
-        BsonDocument getSchemaCmd = constructSQLGetResultSchemaDocument(sql);
-        try {
-            MongoIterable<BsonDocument> iterable =
-                    currentDB
-                            .withCodecRegistry(MongoDriver.registry)
-                            .aggregate(Collections.singletonList(stage), BsonDocument.class)
-                            .maxTime(maxQuerySec, TimeUnit.SECONDS);
-            if (fetchSize != 0) {
-                iterable = iterable.batchSize(fetchSize);
-            }
+        logger.log(Level.SEVERE, "Query: " + sql);
 
+        MongoJsonSchema schema = null;
+        MongoIterable<BsonDocument> iterable = null;
+        if (conn.isConnectingToDataFederation()) {
+            BsonDocument getSchemaCmd = constructSQLGetResultSchemaDocument(sql);
             MongoJsonSchemaResult schemaResult =
                     currentDB
                             .withCodecRegistry(MongoDriver.registry)
                             .runCommand(getSchemaCmd, MongoJsonSchemaResult.class);
 
-            MongoJsonSchema schema = schemaResult.schema.mongoJsonSchema;
+            schema = schemaResult.schema.mongoJsonSchema;
+
+            try {
+                iterable =
+                        currentDB
+                                .withCodecRegistry(MongoDriver.registry)
+                                .aggregate(
+                                        Collections.singletonList(
+                                                constructQueryDocument(sql, BSON_ONE_INT_VALUE)),
+                                        BsonDocument.class)
+                                .maxTime(maxQuerySec, TimeUnit.SECONDS);
+                if (fetchSize != 0) {
+                    iterable = iterable.batchSize(fetchSize);
+                }
+            } catch (MongoExecutionTimeoutException e) {
+                throw new SQLTimeoutException(e);
+            }
+        } else {
+            try {
+                Namespaces namespaces = getNamespaces(currentDBName, sql);
+
+                Document catalogDoc = new Document();
+                // for each collection in the namespace, get the schema from schema cache
+                for (Namespace namespace : namespaces.namespaces) {
+                    MongoCollection schemasForDB =
+                            conn.schemaCacheDB.getCollection(namespace.database);
+                    Document schemaForColl =
+                            (Document)
+                                    schemasForDB
+                                            .find(exists(namespace.collection))
+                                            .projection(excludeId())
+                                            .first();
+
+                    if (schemaForColl == null) {
+                        logger.log(
+                                Level.INFO,
+                                "No results found for "
+                                        + namespace.database
+                                        + "."
+                                        + namespace.collection);
+                    } else {
+                        logger.log(
+                                Level.INFO,
+                                "Namespace for `"
+                                        + sql
+                                        + "` "
+                                        + namespace.database
+                                        + "."
+                                        + namespace.collection
+                                        + " : \n"
+                                        + schemaForColl.toJson(JSON_WRITER_SETTINGS));
+                        catalogDoc.append(namespace.database, schemaForColl.toBsonDocument());
+                    }
+                }
+
+                final byte[] catalog = toBytes(catalogDoc);
+                logger.log(
+                        Level.INFO,
+                        "Catalog for `"
+                                + sql
+                                + "` : \n"
+                                + new RawBsonDocument(catalog).toJson(JSON_WRITER_SETTINGS));
+                String base64Catalog = Base64.getEncoder().encodeToString(catalog);
+                String translationResultBase64 =
+                        TranslationHelpers.translate(currentDBName, sql, base64Catalog, 1);
+                byte[] rawContent = Base64.getDecoder().decode(translationResultBase64);
+                TranslationResult result =
+                        new RawBsonDocument(rawContent).decode(TRANSLATION_RESULT_CODEC_CODEC);
+
+                logger.log(Level.INFO, "Target DB : " + result.targetDb);
+                logger.log(Level.INFO, "Target collection : " + result.targetCollection);
+                logger.log(Level.INFO, "Pipeline : " + result.pipeline);
+
+                schema = result.resulSetSchema;
+                try {
+                    iterable =
+                            conn.mongoClient
+                                    .getDatabase(result.targetDb)
+                                    .getCollection(result.targetCollection)
+                                    .aggregate(result.pipeline, BsonDocument.class)
+                                    .maxTime(maxQuerySec, TimeUnit.SECONDS);
+                    if (fetchSize != 0) {
+                        iterable = iterable.batchSize(fetchSize);
+                    }
+                } catch (MongoExecutionTimeoutException e) {
+                    throw new SQLTimeoutException(e);
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+
+                logger.log(Level.SEVERE, e.getMessage());
+                throw new SQLException(e);
+            }
+        }
+
+        try {
+
             resultSet = new MongoResultSet(this, iterable.cursor(), schema, conn.getExtJsonMode());
             return resultSet;
         } catch (MongoExecutionTimeoutException e) {
             throw new SQLTimeoutException(e);
+        }
+    }
+
+    private static final Codec<Document> DOCUMENT_CODEC = new DocumentCodec();
+
+    private static byte[] toBytes(Document document) {
+        try (BasicOutputBuffer buffer = new BasicOutputBuffer()) {
+            BsonBinaryWriter writer = new BsonBinaryWriter(buffer);
+            DOCUMENT_CODEC.encode(
+                    writer,
+                    document,
+                    EncoderContext.builder().isEncodingCollectibleDocument(true).build());
+            return buffer.toByteArray();
         }
     }
 
