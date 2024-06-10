@@ -21,11 +21,12 @@ post:
 
 buildvariants:
 
-  - name: static-analysis
-    display_name: "Static Analysis"
+  - name: code-quality
+    display_name: "Code quality"
     run_on: [ ubuntu2204-small ]
     tasks:
       - spotless
+      - sbom
 
   - name: ubuntu2204-64-jdk-8
     display_name: Ubuntu 22.04 jdk-8
@@ -51,6 +52,7 @@ tasks:
   - name: "build"
     commands:
       - func: "build jdbc driver"
+      - func: "trace artifacts"
 
   - name: "test-unit"
     commands:
@@ -75,6 +77,10 @@ tasks:
   - name: spotless
     commands:
       - func: "check spotless"
+
+  - name: sbom
+    commands:
+      - func: "generate SBOM and scan"
 
   - name: download-center-update
     git_tag_only: true
@@ -416,3 +422,83 @@ functions:
         bucket: translators-connectors-releases
         permissions: public-read
         content_type: application/json
+
+  "generate SBOM and scan":
+    - command: shell.exec
+      type: test
+      params:
+        shell: bash
+        working_dir: mongo-jdbc-driver
+        script: |
+          ${prepare_shell}
+          echo "${assume_role_arn}"
+    - command: ec2.assume_role
+      params:
+        role_arn: ${assume_role_arn}
+    - command: shell.exec
+      type: test
+      params:
+        shell: bash
+        working_dir: mongo-jdbc-driver
+        script: |
+          ${prepare_shell}
+          
+          echo "${assume_role_arn}"
+          echo "Install SBOM tool..."
+          
+          OS=$(uname)
+          echo "OS=$OS"
+          ARCH="$(uname -m)"
+          echo "Arch=$ARCH"
+          
+          SBOM_DEST=.
+          SBOM_NAME=mongo-jdbc-driver.cdx
+          SBOM_DIR=sbom_tools
+          mkdir $SBOM_DIR
+          
+          # Install Grype
+          echo "-- Downloading Grype --"
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b $SBOM_DIR
+          echo "------------------------------------"
+          
+          # Generate the SBOM
+          echo "-- Generating SBOM --"
+          ./gradlew clean cyclonedxBom -PcyclonedxBomDestination=$SBOM_DEST -PcyclonedxBomName=$SBOM_NAME
+          echo "------------------------------------"
+          
+          # Scanning the SBOM
+          echo "-- Scanning SBOM --"
+          set +e
+          ./$SBOM_DIR/grype sbom:$SBOM_NAME --fail-on low
+          SCAN_RESULT=$?
+          if [[ $SCAN_RESULT -ne 0 ]]; then
+          # Print out the vulnerabilities found in an easy to read format for Evergreen logs
+          ./$SBOM_DIR/grype sbom:$SBOM_LICENSES --fail-on low > scan_result.tmp
+          cat scan_result.tmp
+          fi
+          set -e
+          echo "------------------------------------"
+          
+          # Exit with a failure if the scan found a vulnerability
+          exit $SCAN_RESULT
+    - command: s3.put
+      params:
+        aws_key: ${AWS_ACCESS_KEY_ID}
+        aws_secret: ${AWS_SECRET_ACCESS_KEY}
+        local_files_include_filter:
+          - mongo-jdbc-driver/*.cdx.json
+        remote_file: mongo-jdbc-driver/artifacts/${version_id}/${build_variant}/ssdlc/
+        content_type: text/plain
+        bucket: mciuploads
+        permissions: public-read
+
+  "trace artifacts":
+    - command: papertrail.trace
+      params:
+        work_dir: "mongo-jdbc-driver"
+        key_id: ${papertrail_id}
+        secret_key: ${papertrail_key}
+        product: mongo-jdbc-driver-testing
+        version: ${MDBJDBC_VER}
+        filenames:
+          - "build/libs/*.jar"

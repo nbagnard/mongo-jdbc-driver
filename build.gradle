@@ -35,17 +35,15 @@ cyclonedxBom {
     // Specified the version of the CycloneDX specification to use. Defaults to '1.5'
     schemaVersion = "1.5"
     // Boms destination directory. Defaults to 'build/reports'
-    destination = file("build/reports")
+    destination = file(cyclonedxBomDestination)
     // The file name for the generated BOMs (before the file format suffix). Defaults to 'bom'
-    outputName = "bom"
+    outputName = cyclonedxBomName
     // The file format generated, can be xml, json or all for generating both. Defaults to 'all'
     outputFormat = "json"
     // Exclude BOM Serial Number. Defaults to 'true'
     includeBomSerialNumber = false
     // Exclude License Text. Defaults to 'true'
-    includeLicenseText = true
-    // Override component version. Defaults to the project version
-    componentVersion = "2.0.0"
+    includeLicenseText = false
 }
 
 
